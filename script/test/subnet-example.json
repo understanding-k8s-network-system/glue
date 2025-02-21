@@ -1,0 +1,1 @@
+{"podCIDR":"172.24.0.0/21","serviceCIDR":"172.23.0.0/24","nodeCIDR":"172.24.0.0/24","PlugInSticked":{"Type":"ipvlan","Master":"enp0s8","Mode":""},"DefaultNeighMac":""}

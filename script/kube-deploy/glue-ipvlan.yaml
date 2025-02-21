@@ -1,0 +1,151 @@
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: glue
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - list
+  - watch
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: glue
+  namespace: kube-system
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: glue
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: glue
+subjects:
+- kind: ServiceAccount
+  name: glue
+  namespace: kube-system
+---
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: kube-glue-cfg
+  namespace: kube-system
+  labels:
+    tier: node
+    app: glue
+data:
+  cni-conf.json: |
+    {
+      "name": "glue-net",
+      "cniVersion": "1.0.0",
+      "plugins": [
+        {
+          "type": "glue"
+        },
+        {
+          "type": "portmap",
+          "capabilities": {
+            "portMappings": true
+          }
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kube-glue-ds
+  namespace: kube-system
+  labels:
+    tier: node
+    app: glue
+spec:
+  selector:
+    matchLabels:
+      app: glue
+  template:
+    metadata:
+      labels:
+        tier: node
+        app: glue
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: kubernetes.io/os
+                operator: In
+                values:
+                - linux
+      hostNetwork: true
+      priorityClassName: system-node-critical
+      tolerations:
+      - operator: Exists
+        effect: NoSchedule
+      serviceAccountName: glue
+      containers:
+      - name: kube-glue
+        image: registry.local.io/glue:latest
+        imagePullPolicy: Always
+        command:
+        - /bin/glued
+        args:
+        - -stick-cni-master=enp0s8 
+        - -stick-cni-type=ipvlan 
+        - -stick-cni-mode=l2
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "50Mi"
+          limits:
+            cpu: "100m"
+            memory: "50Mi"
+        securityContext:
+          privileged: false
+          capabilities:
+            add: ["NET_ADMIN", "NET_RAW"]
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: GLUE_FILES_TO_COPY_ON_BOOT
+          value: /bin/glue:/opt/cni/bin/glue,/etc/glue/cni-conf.json:/etc/cni/net.d/10-glue.conflist
+        volumeMounts:
+        - name: run
+          mountPath: /run/glue
+        - name: cni-bin
+          mountPath: /opt/cni/bin/
+        - name: glue-cfg
+          mountPath: /etc/glue/
+        - name: cni-conf
+          mountPath: /etc/cni/net.d
+      volumes:
+      - name: run
+        hostPath:
+          path: /run/glue
+      - name: cni-conf
+        hostPath:
+          path: /etc/cni/net.d
+      - name: cni-bin
+        hostPath:
+          path: /opt/cni/bin/
+      - name: glue-cfg
+        configMap:
+          name: kube-glue-cfg
